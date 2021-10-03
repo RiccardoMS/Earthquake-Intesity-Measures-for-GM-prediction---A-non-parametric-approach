@@ -1,0 +1,503 @@
+---
+title: "MultiSplines"
+output: html_notebook
+---
+
+DISAGIO USABLEVS30--> NON VA
+RANDOM EFFECT è SIGNIFICATIVO --> COSA COMPORTA?
+
+LIBRARIES and WD
+
+Per rimuovere una covariata dal modello serve un permutational test se non ho gaussianità.
+
+posso fare le confidence bands senza gaussianità, test 03/12? --> bootstrap or permutation for confidence bands
+
+```{r}
+#setwd("C:/Users/paolo/OneDrive/Desktop/Nonparam/progetto")
+
+library(MASS)
+library(rgl)
+library(DepthProc)
+library(gam)
+library(plot3D)
+
+```
+
+
+I load my data and I remove last covariates already excluded from analysis (CHECK).
+There should be a missing factor for clusterization along depth.
+I apply a log transform!
+MStat==ML!
+Try factor station
+
+```{r}
+DATA<-read.csv("FAS_000_50_cleaned.csv", header=TRUE, sep=",")
+colnames(DATA)
+Station=factor(DATA$Stat)
+attach(DATA)
+
+```
+
+
+Utility Function
+
+```{r}
+
+gamR2 <- function(gam){
+R2 <- 1-((sum(residuals(gam)^2))/
+(sum((gam$y - mean(gam$y))^2)))
+R2adj <- 1- ((1 - R2) * (length(gam$y) - 1)/
+(length(gam$y) - length(gam$coefficients) - 1))
+a <- data.frame(R2, R2adj)
+return(a)
+}
+
+ggplot.model <- function(model, type="conditional", res=FALSE,
+                       col.line="#7fc97f", col.point="#beaed4", size.line=1, size.point=1) {
+  require(visreg)
+  require(plyr)
+  plotdata <- visreg(model, type = type, plot = FALSE)
+  smooths <- ldply(plotdata, function(part)
+    data.frame(Variable = part$meta$x,
+             x=part$fit[[part$meta$x]],
+             smooth=part$fit$visregFit,
+             lower=part$fit$visregLwr,
+             upper=part$fit$visregUpr))
+  residuals <- ldply(plotdata, function(part)
+    data.frame(Variable = part$meta$x,
+               x=part$res[[part$meta$x]],
+               y=part$res$visregRes))
+  if (res)
+    ggplot(smooths, aes(x, smooth)) + geom_line(col=col.line, size=size.line) +
+      geom_line(aes(y=lower), linetype="dashed", col=col.line, size=size.line) +
+      geom_line(aes(y=upper), linetype="dashed", col=col.line, size=size.line) +
+      geom_point(data = residuals, aes(x, y), col=col.point, size=size.point) +
+      facet_grid(. ~ Variable, scales = "free_x")
+  else
+    ggplot(smooths, aes(x, smooth)) + geom_line(col=col.line, size=size.line) +
+      geom_line(aes(y=lower), linetype="dashed", col=col.line, size=size.line) +
+      geom_line(aes(y=upper), linetype="dashed", col=col.line, size=size.line) +
+      facet_grid(. ~ Variable, scales = "free_x")
+}
+
+```
+
+
+Now let's plot the variable relationship with LogY.
+I can't identify noteworthy cutoffs or knot points clearly.
+
+```{r}
+plot(DATA$ML,DATA$LogY)
+plot(DATA$EvDpt,DATA$LogY)
+plot(DATA$Dipo,DATA$LogY)
+plot(DATA$UsableVS30,DATA$LogY)
+
+```
+
+Therefore try evenly spaced knots for splines. Start with:
+
+
+EVDPT
+bs doesn't handle well boundaries, while ns performs much better.
+On the whole I'd choose the smoothed one.
+
+```{r}
+DF=7
+knots.EvDpt=quantile(DATA$EvDpt,probs=c(0.1,0.5,0.9))
+boundary.knots.EvDpt=quantile(DATA$EvDpt,probs=c(0.05,0.95))
+normal_EvDpt= ns(EvDpt,knots=knots.EvDpt,Boundary.knots=boundary.knots.EvDpt)
+
+model_EvDpt=lm(LogY ~ ns(EvDpt,knots=knots.EvDpt,Boundary.knots=boundary.knots.EvDpt)) #natural splines
+#model_EvDpt=lm(LogY ~ bs(EvDpt, degree=3,df=DF)) #classical splines
+#model_EvDpt=lm(LogY ~ EvDpt)
+EvDpt.grid=seq(range(EvDpt)[1],range(EvDpt)[2],by=0.005)
+preds=predict(model_EvDpt,list(EvDpt=EvDpt.grid) ,se=T)
+se.bands=cbind(preds$fit +2* preds$se.fit ,preds$fit -2* preds$se.fit)
+plot(EvDpt ,LogY ,xlim=range(EvDpt.grid) ,cex =.5, col =" darkgrey " )
+lines(EvDpt.grid,preds$fit ,lwd =2, col =" blue")
+matlines(EvDpt.grid ,se.bands ,lwd =1, col =" blue",lty =3)
+knots=attr(bs(EvDpt, degree=3,df=DF),'knots')
+
+
+summary(model_EvDpt)
+
+#SMOOTHING SPLINES
+
+smooth_EvDpt=smooth.spline(EvDpt,LogY,cv=T)
+plot(EvDpt ,LogY,cex =.5, col =" darkgrey ")
+lines(smooth_EvDpt,col="blue",lwd=2)
+smooth_EvDpt$lambda
+smooth_EvDpt$df
+
+model_EvDpt=smooth_EvDpt
+
+library(mgcv)
+model_EvDpt=mgcv::gam(LogY ~ s(EvDpt, bs='cr'))
+preds=predict(model_EvDpt,list(EvDpt=EvDpt.grid) ,se=T)
+se.bands=cbind(preds$fit +2* preds$se.fit ,preds$fit -2* preds$se.fit)
+plot(EvDpt ,LogY ,xlim=range(EvDpt.grid) ,cex =.5, col =" darkgrey " )
+lines(EvDpt.grid,preds$fit ,lwd =2, col =" blue")
+matlines(EvDpt.grid ,se.bands ,lwd =1, col =" blue",lty =3)
+detach("package:mgcv", unload=TRUE)
+                          
+
+
+```
+USABLEVS30
+Smoothed splines are not far from classical linear models. Why not?
+Ns varies a bit more.
+BOH
+```{r}
+DF=7
+knots.UsableVS30=quantile(DATA$UsableVS30,probs=c(0.1,0.5,0.9))
+boundary.knots.UsableVS30=quantile(DATA$UsableVS30,probs=c(0.05,0.95))
+normal_UsableVS30= ns(UsableVS30,knots=knots.UsableVS30,Boundary.knots=boundary.knots.UsableVS30)
+
+model_UsableVS30=lm(LogY ~ ns(UsableVS30,knots=knots.UsableVS30,Boundary.knots=boundary.knots.UsableVS30)) #natural splines
+#model_UsableVS30=lm(LogY ~ bs(UsableVS30, degree=3,df=DF)) #classical splines
+#model_UsableVS30=lm(LogY ~ UsableVS30)
+UsableVS30.grid=seq(range(UsableVS30)[1],range(UsableVS30)[2],by=0.005)
+preds=predict(model_UsableVS30,list(UsableVS30=UsableVS30.grid) ,se=T)
+se.bands=cbind(preds$fit +2* preds$se.fit ,preds$fit -2* preds$se.fit)
+plot(UsableVS30 ,LogY ,xlim=range(UsableVS30.grid) ,cex =.5, col =" darkgrey " )
+lines(UsableVS30.grid,preds$fit ,lwd =2, col =" blue")
+matlines(UsableVS30.grid ,se.bands ,lwd =1, col =" blue",lty =3)
+knots=attr(bs(UsableVS30, degree=3,df=DF),'knots')
+
+
+summary(model_UsableVS30)
+
+#SMOOTHING SPLINES
+
+smooth_UsableVS30=smooth.spline(UsableVS30,LogY,cv=T)
+plot(UsableVS30 ,LogY,cex =.5, col =" darkgrey ")
+lines(smooth_UsableVS30,col="blue",lwd=2)
+smooth_UsableVS30$lambda
+smooth_UsableVS30$df
+
+smooth_UsableVS30=smooth.spline(UsableVS30,LogY,lambda=1e-2)
+plot(UsableVS30 ,LogY,cex =.5, col =" darkgrey ")
+lines(smooth_UsableVS30,col="blue",lwd=2)
+smooth_UsableVS30$lambda
+smooth_UsableVS30$df
+
+```
+
+DIPO
+Smoothed is wobbly!
+Ns works fine.
+```{r}
+DF=7
+knots.Dipo=quantile(DATA$Dipo,probs=c(0.1,0.5,0.9))
+boundary.knots.Dipo=quantile(DATA$Dipo,probs=c(0.05,0.95))
+normal_Dipo= ns(Dipo,knots=knots.Dipo,Boundary.knots=boundary.knots.Dipo)
+
+model_Dipo=lm(LogY ~ ns(Dipo,knots=knots.Dipo,Boundary.knots=boundary.knots.Dipo)) #natural splines
+#model_Dipo=lm(LogY ~ bs(Dipo, degree=3,df=DF)) #classical splines
+#model_Dipo=lm(LogY ~ Dipo)
+Dipo.grid=seq(range(Dipo)[1],range(Dipo)[2],by=0.005)
+preds=predict(model_Dipo,list(Dipo=Dipo.grid) ,se=T)
+se.bands=cbind(preds$fit +2* preds$se.fit ,preds$fit -2* preds$se.fit)
+plot(Dipo ,LogY ,xlim=range(Dipo.grid) ,cex =.5, col =" darkgrey " )
+lines(Dipo.grid,preds$fit ,lwd =2, col =" blue")
+matlines(Dipo.grid ,se.bands ,lwd =1, col =" blue",lty =3)
+knots=attr(bs(Dipo, degree=3,df=DF),'knots')
+
+
+summary(model_Dipo)
+
+#SMOOTHING SPLINES
+
+
+smooth_Dipo=smooth.spline(Dipo,LogY,lambda=1e-2)
+plot(Dipo ,LogY,cex =.5, col =" darkgrey ")
+lines(smooth_Dipo,col="blue",lwd=2)
+smooth_Dipo$lambda
+smooth_Dipo$df
+
+
+```
+
+
+ML
+I'd choose ns, since smooth splines weakly suggest a weird behavior for high Magnitudes.
+```{r}
+
+
+
+DF=7
+knots.ML=quantile(DATA$ML,probs=c(0.1,0.5,0.9))
+boundary.knots.ML=quantile(DATA$ML,probs=c(0.05,0.95))
+normal_ML= ns(ML,knots=knots.ML,Boundary.knots=boundary.knots.ML)
+
+model_ML=lm(LogY ~ ns(ML,knots=knots.ML,Boundary.knots=boundary.knots.ML)) #natural splines
+#model_ML=lm(LogY ~ bs(ML, degree=3,df=DF)) #classical splines
+#model_ML=lm(LogY ~ ML)
+ML.grid=seq(range(ML)[1],range(ML)[2],by=0.005)
+preds=predict(model_ML,list(ML=ML.grid) ,se=T)
+se.bands=cbind(preds$fit +2* preds$se.fit ,preds$fit -2* preds$se.fit)
+plot(ML ,LogY ,xlim=range(ML.grid) ,cex =.5, col =" darkgrey " )
+lines(ML.grid,preds$fit ,lwd =2, col =" blue")
+matlines(ML.grid ,se.bands ,lwd =1, col =" blue",lty =3)
+knots=attr(bs(ML, degree=3,df=DF),'knots')
+
+
+summary(model_ML)
+
+#SMOOTHING SPLINES
+
+smooth_ML=smooth.spline(ML,LogY,cv=T)
+plot(ML ,LogY,cex =.5, col =" darkgrey ")
+lines(smooth_ML,col="blue",lwd=2)
+smooth_ML$lambda
+smooth_ML$df
+
+
+
+
+```
+
+
+Now combine splines with GAM.
+I have options depending on s() and other smoothing splines functions.
+
+EVDPT vs DIPO
+
+```{r}
+
+
+#random uses factor fox mixed linear effects
+gam1=gam::gam(LogY ~ s(EvDpt ,df=7)+s(Dipo ,df=8))
+#gam1=gam::gam(LogY ~ ns(EvDpt,knots=knots.EvDpt,Boundary.knots=boundary.knots.EvDpt)+
+                #  ns(Dipo,knots=knots.Dipo,Boundary.knots=boundary.knots.Dipo)) #plor problems
+
+#gam1=lm(LogY ~ ns(EvDpt,knots=knots.EvDpt,Boundary.knots=boundary.knots.EvDpt)+
+       #           ns(Dipo,knots=knots.Dipo,Boundary.knots=boundary.knots.Dipo)) #bad fit
+
+
+
+EvDpt.grid=seq(range(EvDpt)[1],range(EvDpt)[2],by=1)
+Dipo.grid=seq(range(Dipo)[1],range(Dipo)[2],by=1)
+summary(gam1)
+plot(gam1)
+grid=expand.grid(EvDpt.grid,Dipo.grid)
+names(grid)=c('EvDpt','Dipo')
+
+pred=predict(gam1,newdata = grid) 
+
+persp3D(z = pred, theta = 120)
+persp3d(EvDpt.grid,Dipo.grid,pred,col='blue')
+points3d(EvDpt, Dipo, LogY, col = "red", size = 2, add=T)
+
+```
+
+ML vs USABLEVS30
+
+
+```{r}
+
+#random uses factor fox mixed linear effects
+gam1=gam::gam(LogY ~ s(ML,df=8)+s(UsableVS30 ,df=8))
+
+ML.grid=seq(range(ML)[1],range(ML)[2],by=1)
+UsableVS30.grid=seq(range(UsableVS30)[1],range(UsableVS30)[2],by=1)
+summary(gam1)
+plot(gam1)
+grid=expand.grid(ML.grid,UsableVS30.grid)
+names(grid)=c('ML','UsableVS30')
+
+pred=predict(gam1,newdata = grid) 
+
+persp3D(z = pred, theta = 120)
+persp3d(ML.grid,UsableVS30.grid,pred,col='blue')
+points3d(ML,UsableVS30, LogY, col = "red", size = 2, add=T)
+
+```
+
+ML vs Dipo
+
+```{r}
+#gam1=gam(LogY ~ s(ML ,df=12)+s(Dipo ,df=12))
+#random uses factor fox mixed linear effects
+gam1=gam::gam(LogY ~ s(ML,df=12)+s(Dipo ,df=12))
+
+ML.grid=seq(range(ML)[1],range(ML)[2],by=1)
+Dipo.grid=seq(range(Dipo)[1],range(Dipo)[2],by=1)
+summary(gam1)
+plot(gam1)
+grid=expand.grid(ML.grid,Dipo.grid)
+names(grid)=c('ML','Dipo')
+
+pred=predict(gam1,newdata = grid) 
+
+persp3D(z = pred, theta = 120)
+persp3d(ML.grid,Dipo.grid,pred,col='blue')
+points3d(ML, Dipo, LogY, col = "red", size = 2, add=T)
+
+```
+
+ML vs EVDPT
+
+```{r}
+#gam1=gam(LogY ~ s(ML ,df=12)+s(Dipo ,df=12))
+#random uses factor fox mixed linear effects
+gam1=gam::gam(LogY ~ s(ML,df=12)+s(EvDpt ,df=12))
+
+ML.grid=seq(range(ML)[1],range(ML)[2],by=1)
+EvDpt.grid=seq(range(EvDpt)[1],range(EvDpt)[2],by=1)
+summary(gam1)
+plot(gam1)
+grid=expand.grid(ML.grid,EvDpt.grid)
+names(grid)=c('ML','EvDpt')
+
+pred=predict(gam1,newdata = grid) 
+
+persp3D(z = pred, theta = 120)
+persp3d(ML.grid,EvDpt.grid,pred,col='blue')
+points3d(ML, EvDpt, LogY, col = "red", size = 2, add=T)
+
+```
+
+EVDPT vs UsableVS30
+
+```{r}
+
+gam1=gam::gam(LogY ~ s(UsableVS30,df=10)+s(EvDpt ,df=10))
+
+UsableVS30.grid=seq(range(UsableVS30)[1],range(UsableVS30)[2],by=1)
+EvDpt.grid=seq(range(EvDpt)[1],range(EvDpt)[2],by=1)
+summary(gam1)
+plot(gam1)
+grid=expand.grid(UsableVS30.grid,EvDpt.grid)
+names(grid)=c('UsableVS30','EvDpt')
+
+pred=predict(gam1,newdata = grid) 
+
+persp3D(z = pred, theta = 120)
+persp3d(UsableVS30.grid,EvDpt.grid,pred,col='blue')
+points3d(UsableVS30, EvDpt, LogY, col = "red", size = 2, add=T)
+
+```
+
+USAblEVS30 VS DIPO
+
+```{r}
+
+
+#gam1=gam::gam(LogY ~ s(UsableVS30,df=8)+s(Dipo ,df=10))
+
+gam1=gam::gam(LogY ~ s(UsableVS30,df=6, spar=1)+s(Dipo ,df=8,spar=0.1))
+
+UsableVS30.grid=seq(range(UsableVS30)[1],range(UsableVS30)[2],by=1)
+Dipo.grid=seq(range(Dipo)[1],range(Dipo)[2],by=1)
+summary(gam1)
+plot(gam1)
+grid=expand.grid(UsableVS30.grid,Dipo.grid)
+names(grid)=c('UsableVS30','Dipo')
+
+pred=predict(gam1,newdata = grid) 
+
+persp3D(z = pred, theta = 120)
+persp3d(UsableVS30.grid,Dipo.grid,pred,col='blue')
+points3d(UsableVS30, Dipo, LogY, col = "red", size = 2, add=T)
+
+
+
+
+```
+
+##NOW ALL TOGETHER
+  s(UsableVS30,df=6, spar=1)
+
+
+
+gam1=gam::gam(LogY ~ s(Dipo ,df=10)+s(ML,df=12)+s(EvDpt ,df=8)+  s(UsableVS30,df=6, spar=1))
+
+summary.Gam(gam1)
+plot(gam1)
+gamR2(gam1)
+
+
+
+
+
+gam2<-gam::gam(LogY ~ ns(EvDpt,knots=knots.EvDpt,Boundary.knots=boundary.knots.EvDpt)+
+                ns(Dipo,knots=knots.Dipo,Boundary.knots=boundary.knots.Dipo)+
+                 ns(ML,knots=knots.ML,Boundary.knots=boundary.knots.ML)
+               )
+summary(gam2)
+gamR2(gam2)
+
+print(anova(gam1,best_gam,test='F'))
+print(anova(gam1,gam2,test='F'))
+print(anova(best_gam,gam4,test='F'))
+
+
+OTHER MODELS - Rimuovo usableVS30 ##non mi convince
+
+
+
+gam3<-gam::gam(LogY ~ ns(EvDpt,knots=knots.EvDpt,Boundary.knots=boundary.knots.EvDpt)+
+                ns(Dipo,knots=knots.Dipo,Boundary.knots=boundary.knots.Dipo)+
+                 ns(ML,knots=knots.ML,Boundary.knots=boundary.knots.ML)
+               )
+summary(gam3)
+gamR2(gam3)
+
+
+gam4<-gam::gam(LogY ~ ns(EvDpt,knots=knots.EvDpt,Boundary.knots=boundary.knots.EvDpt)+
+                ns(Dipo,knots=knots.Dipo,Boundary.knots=boundary.knots.Dipo)+
+                 ns(ML,knots=knots.ML,Boundary.knots=boundary.knots.ML)
+               +random(Station))
+summary(gam4)
+gamR2(gam4)
+
+
+print(anova(gam2,gam3,test='F'))  #model 4 beats model 3, yet the p-value for UsableVS30 is much higher
+print(anova(gam3,gam4,test='F'))  #model 5 > model 4
+print(anova(best_gam,gam4,test='F'))  #model 5 > model 4
+
+gam4$coefficients
+
+
+
+PERMUTATION TO VALIDATE RE
+
+```{r}
+library(mgcv)
+
+best_gam=mgcv::gam(LogY ~ s(Dipo,bs='cr')+s(ML,bs='cr')+s(EvDpt,bs='cr')+s(Station,bs="re")) ##where do I put nodes?
+summary(best_gam)
+ggplot.model(best_gam, res=F)
+#best_gam$coefficients ##osservo gli effetti misti
+
+#plot(best_gam$residuals,best_gam$fitted.values)
+#qqnorm(best_gam$residuals)
+#ks.test(x=best_gam$residuals,y='pnorm',alternative='two.sided') ###non gaussiano
+
+best_gamb=mgcv::gam(LogY ~ s(Dipo,bs='cr')+s(ML,bs='cr')+s(EvDpt,bs='cr')) ##where do I put nodes?
+
+print(anova(best_gam,best_gamb,test='F'))
+
+print("AIC with RE")
+AIC(best_gam)
+print("AIC without RE")
+AIC(best_gamb)
+
+print("BIC with RE")
+BIC(best_gam)
+print("BIC without RE")
+BIC(best_gamb)
+
+
+
+#detach("package:mgcv", unload=TRUE)
+
+```
+
+
+
+
+
+
+
